@@ -50,29 +50,28 @@ class ControllerWorker(QThread):
             for event in pygame.event.get():
                 if event.type == pygame.JOYBUTTONDOWN:
                     # BUTTON MAPPINGS FOR SWITCH PRO CONTROLLER (Common Linux Layout)
-                    # 0=B, 1=A, 2=Y, 3=X, 4=L, 5=R, 6=ZL, 7=ZR, 8=Minus, 9=Plus
+                    # 0=B, 1=A, 2=X, 3=Y, 4=LB, 5=RB, 7=LT, 8=RT, 9=Minus, 10=Plus, 11=Home, 12=Screenshot
 
-                    # Row Cursor Movement: Y (3) and B (0)
                     if event.button == 3:  # Y Button
                         if self.inside_row:
                             self.move_left.emit()
                         else:
                             # Direct Row Select: Y opens Row 0 (EICV...)
-                            self.direct_row_select.emit(0)
+                            self.direct_row_select.emit(1)
 
                     if event.button == 0:  # B Button
                         if self.inside_row:
                             self.move_right.emit()
                         else:
                             # Direct Row Select: B opens Row 2 (TNMK...)
-                            self.direct_row_select.emit(2)
+                            self.direct_row_select.emit(3)
 
                     if event.button == 1:  # A Button
                         if self.inside_row:
                             self.inside_row = False
                         else:
                             # Direct Row Select: A opens Row 3 (ASFXPL)
-                            self.direct_row_select.emit(3)
+                            self.direct_row_select.emit(2)
 
                     if event.button == 2:  # X Button
                         if self.inside_row:
@@ -80,29 +79,22 @@ class ControllerWorker(QThread):
                             self.toggle_caps.emit()
                         else:
                             # Direct Row Select: X opens Row 1 (ORYQ...)
-                            self.direct_row_select.emit(1)
+                            self.direct_row_select.emit(0)
 
-                    # Right trigger Button - to select the current letter
+                    # Right trigger to select the current letter
                     elif event.button == 8:
                         if self.inside_row:
                             self.select_letter.emit()
 
-                    # UPDATED: Plus/Start Button (9) always inserts a space when in a row
-                    elif event.button == 9:  # Plus Button (Start)
+                    # Left trigger deletes the current letter
+                    elif event.button == 7:
+                        if self.inside_row:
+                            self.delete_char.emit()
+
+                    # UPDATED: Plus Button (10) inserts a space when in a row
+                    elif event.button == 10:  # Plus Button (Start)
                         if self.inside_row:
                             self.insert_space.emit()
-
-            # Digital check for Delete/Backspace (Button 7 is usually ZR - Right Trigger)
-            if controller:
-                # Check for Right Trigger (usually button 7, but often axis mapping is more reliable for triggers)
-                # Sticking to button 7 as per common Switch Pro Linux mapping for this example
-                if controller.get_numbuttons() > 7 and controller.get_button(7):
-                    # Debounce check to prevent spamming backspace
-                    if not self.delete_held:
-                        self.delete_char.emit()
-                        self.delete_held = True
-                else:
-                    self.delete_held = False
 
 
 # ------------------ On-Screen Keyboard ------------------ #
@@ -200,7 +192,7 @@ class OnScreenKeyboard(QMainWindow):
         layout.addStretch(1)
         # UPDATED HINT: Changed [Minus/Plus] to [Minus] Select and [Plus] Space
         hint = QLabel(
-            "CONTROLS: [A/B/X/Y]: Direct Row Select | [Y/B]: Move Cursor | [Minus]: Select | [Plus]: Space | [ZR]: Delete | [X]: Toggle CAPS")
+            "CONTROLS: [A/B/X/Y]: Direct Row Select | [Y/B]: Move Cursor | [Minus]: Space | [ZL]: Delete | [ZR]: Select | [X]: Toggle CAPS")
         hint.setStyleSheet("color: #aaa; font-size: 10pt;")
         hint.setAlignment(Qt.AlignCenter)
         layout.addWidget(hint, 0)  # stretch factor 0
