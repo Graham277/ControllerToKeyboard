@@ -1,34 +1,87 @@
 import sys
 import pygame
 from PySide6.QtCore import Signal, Slot, Qt, QThread, QPoint
-from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel)
+from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel
+import difflib
+
+# ------------------ Autocomplete Data ------------------ #
+# Load word list
+try:
+    with open("words.txt", "r", encoding="utf-8") as f:
+        WORDS = [line.strip() for line in f if line.strip()]
+except FileNotFoundError:
+    print("Warning: 'words.txt' not found. Autocomplete will be limited to abbreviations.")
+    WORDS = []
+
+ABBREVIATIONS = {
+    "abt": "about", "ad": "advertisement", "asap": "as soon as possible",
+    "atm": "at the moment", "bc": "because", "bday": "birthday",
+    "bf": "boyfriend", "bff": "best friends forever", "brb": "be right back",
+    "btw": "by the way", "cm": "centimeter", "cya": "see you",
+    "DIY": "do it yourself", "doc": "doctor", "e.g.": "for example",
+    "etc": "and so on", "fyi": "for your information", "idk": "I don't know",
+    "imo": "in my opinion", "jk": "just kidding", "lmk": "let me know",
+    "lol": "laugh out loud", "np": "no problem", "omg": "oh my god",
+    "pls": "please", "tmrw": "tomorrow", "u": "you", "ur": "your",
+}
 
 
-# ------------------ Xbox Controller Worker ------------------ #
+def generate_suggestions(current_text, limit=4):
+    if not current_text or current_text.strip() == "":
+        return []
+
+    suggestions = []
+    last_word = current_text.split()[-1].lower() if current_text.split() else ""
+
+    if not last_word:
+        return []
+
+    if last_word in ABBREVIATIONS:
+        suggestions.append(ABBREVIATIONS[last_word] + " ")
+
+    for word in WORDS:
+        if word.lower().startswith(last_word) and (word + " ") not in suggestions:
+            suggestions.append(word + " ")
+        if len(suggestions) >= limit:
+            break
+
+    if not suggestions and WORDS:
+        close_matches = difflib.get_close_matches(last_word, WORDS, n=limit, cutoff=0.6)
+        clean_matches = [match + " " for match in close_matches if match.lower() != last_word]
+        suggestions.extend(clean_matches)
+
+    return suggestions[:limit]
+
+
+# ------------------ Controller Worker ------------------ #
 class ControllerWorker(QThread):
-    # Signals to send to the main UI
     move_left = Signal()
     move_right = Signal()
-
-    # Signal for direct row selection
     direct_row_select = Signal(int)
-
     select_letter = Signal()
     delete_char = Signal()
-
-    # Signal to toggle Caps Lock
     toggle_caps = Signal()
-
-    # NEW: Signal specifically for adding a space
     insert_space = Signal()
+
+    # Autocomplete signals
+    toggle_autocomplete = Signal()
+    move_suggestion_left = Signal()
+    move_suggestion_right = Signal()
+    select_suggestion = Signal()
+
+    autocomplete_active = False
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.inside_row = False
-        self.delete_held = False  # Initialize debounce flag
+        self.delete_held = False
+        self._running = True
+
+    def stop(self):
+        self._running = False
+        self.wait()
 
     def run(self):
-
         pygame.init()
         pygame.joystick.init()
 
@@ -41,78 +94,104 @@ class ControllerWorker(QThread):
             print("-" * 30)
         else:
             print("No controller detected. Controller inputs will be inactive.")
+            pygame.quit()
             return
 
-        running = True
-        while running:
+        while self._running:
             pygame.time.wait(10)
-
             for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    self._running = False
+                    break
+
                 if event.type == pygame.JOYBUTTONDOWN:
                     # BUTTON MAPPINGS FOR SWITCH PRO CONTROLLER
-                    # 0=B, 1=A, 2=X, 3=Y, 4=LB, 5=RB, 7=LT, 8=RT, 9=Minus, 10=Plus, 11=Home, 12=Screenshot
+                    # 0=B, 1=A, 2=X, 3=Y, 4=LB, 6=RB, 7=LT, 8=RT, 9=Minus, 10=Plus, 11=Home, 12=Screenshot
 
-                    if event.button == 3:  # Y Button
-                        if self.inside_row:
-                            self.move_left.emit()
-                        else:
-                            # Direct Row Select: Y opens Row 1
-                            self.direct_row_select.emit(1)
-
-                    if event.button == 0:  # B Button
-                        if self.inside_row:
-                            self.move_right.emit()
-                        else:
-                            # Direct Row Select: B opens Row 3
-                            self.direct_row_select.emit(3)
-
+                    # ------------------ A BUTTON CONTEXTUAL LOGIC ------------------
                     if event.button == 1:  # A Button
-                        if self.inside_row:
+                        if self.autocomplete_active:
+                            self.toggle_autocomplete.emit()  # Toggle OFF
+                            continue
+                        elif self.inside_row:
+                            # Exit row mode
                             self.inside_row = False
+                            self.direct_row_select.emit(-1)
                         else:
                             # Direct Row Select: A opens Row 2
                             self.direct_row_select.emit(2)
+                        continue
 
-                    if event.button == 2:  # X Button
+                    # ------------------ CONTEXTUAL CONTROLS (Y, B, RT) ------------------
+
+                    if event.button == 3:  # Y Button
+                        if self.autocomplete_active:
+                            self.move_suggestion_left.emit()
+                        elif self.inside_row:
+                            self.move_left.emit()
+                        else:
+                            self.direct_row_select.emit(1)
+
+                    elif event.button == 0:  # B Button
+                        if self.autocomplete_active:
+                            self.move_suggestion_right.emit()
+                        elif self.inside_row:
+                            self.move_right.emit()
+                        else:
+                            self.direct_row_select.emit(3)
+
+                    elif event.button == 8:  # RT / Select Button
+                        if self.autocomplete_active:
+                            self.select_suggestion.emit()  # Selects the entire suggestion word
+                        elif self.inside_row:
+                            self.select_letter.emit()  # Adds the current letter
+                        # If not inside row and not autocomplete, RT does nothing.
+
+                    # ------------------ NON-CONTEXTUAL CONTROLS (X, Home, Plus, RB) ------------------
+
+                    elif event.button == 2:  # X Button
                         if self.inside_row:
-                            # Emit signal to toggle Caps Lock
                             self.toggle_caps.emit()
                         else:
-                            # Direct Row Select: X opens Row 0
                             self.direct_row_select.emit(0)
-
-                    # Right trigger to select the current letter
-                    elif event.button == 8:
-                        if self.inside_row:
-                            self.select_letter.emit()
 
                     # Home deletes the current letter
                     elif event.button == 11:
-                        if self.inside_row:
-                            self.delete_char.emit()
+                        self.delete_char.emit()
 
-                    # UPDATED: Plus Button (10) inserts a space when in a row
-                    elif event.button == 10:  # Plus Button (Start)
-                        if self.inside_row:
-                            self.insert_space.emit()
+                    # Plus Button (10) inserts a space
+                    elif event.button == 10:
+                        self.insert_space.emit()
+
+                    # RB (Right Bumper) to toggle autocomplete
+                    elif event.button == 6:
+                        self.toggle_autocomplete.emit()
+
+        pygame.quit()
+
+    # ------------------ On-Screen Keyboard ------------------ #
 
 
-# ------------------ On-Screen Keyboard ------------------ #
 class OnScreenKeyboard(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # 1. WINDOW SETUP
+        # Window setup
         self.setWindowTitle("Controller Keyboard Overlay")
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
         self.setAttribute(Qt.WA_TranslucentBackground)
-        self.resize(900, 550)
+        self.resize(900, 600)
 
-        # STATE
+        # State
         self.inside_row = False
         self.is_caps_locked = False
 
-        # DATA (All uppercase internally for simplicity in switching)
+        # New State for restoring position after autocomplete
+        self.prev_inside_row = False
+        self.prev_sel_row = 0
+        self.prev_sel_index = 0
+
+        # Keyboard data
         self.base_rows = [
             list("EICVJWH"),
             list("ORYQBU"),
@@ -120,12 +199,11 @@ class OnScreenKeyboard(QMainWindow):
             list("ASFXPL"),
         ]
         self.rows = self._regenerate_keyboard_rows()
-
         self.sel_row = 0
         self.sel_index = 0
         self.row_labels = []
 
-        # 2. UI SETUP
+        # UI Setup
         container = QWidget()
         container.setObjectName("Container")
         container.setStyleSheet("""
@@ -137,190 +215,244 @@ class OnScreenKeyboard(QMainWindow):
             QLabel { color: #eeeeee; font-weight: bold; }
         """)
         self.setCentralWidget(container)
-
         layout = QVBoxLayout(container)
         layout.setContentsMargins(20, 20, 20, 20)
 
-        # Output Label (Fixed size, stretch 0)
-        self.output = QLabel("")
+        # 1. Output Label
+        self.output = QLabel("Typing...")
         self.output.setAlignment(Qt.AlignCenter)
         self.output.setFixedHeight(60)
         self.output.setStyleSheet('font: 24pt "Segoe UI"; background-color: rgba(0,0,0,100); border-radius: 8px;')
-        layout.addWidget(self.output, 0)  # stretch factor 0
+        layout.addWidget(self.output, 0)
+
+        # 2. Autocomplete Suggestion Label
+        self.suggestion_label = QLabel("")
+        self.suggestion_label.setAlignment(Qt.AlignCenter)
+        self.suggestion_label.setStyleSheet('font: 16pt "Segoe UI"; min-height: 40px;')
+        layout.addWidget(self.suggestion_label, 0)
 
         # --- Diamond Container for Rows ---
-        # Use a basic QWidget for absolute positioning
         diamond_container = QWidget()
-
         diamond_container.setFixedSize(800, 450)
         diamond_container.setObjectName("DiamondContainer")
-        layout.addWidget(diamond_container, 20, alignment=Qt.AlignCenter)  # Center the container in the main layout
+        layout.addWidget(diamond_container, 20, alignment=Qt.AlignCenter)
 
-        # Positioning offsets (from the top-left of the diamond_container)
-        # The center of the container is (400, 225)
+        positions = [QPoint(400, 30), QPoint(150, 225), QPoint(650, 225), QPoint(400, 420)]
 
-        # [Row 0]: Top (X Button) - Centered horizontally at the top
-        pos0 = QPoint(400, 30)
-        # [Row 1]: Left (Y Button) - Centered vertically, offset to the left
-        pos1 = QPoint(150, 225)
-        # [Row 2]: Right (A Button) - Centered vertically, offset to the right
-        pos2 = QPoint(650, 225)
-        # [Row 3]: Bottom (B Button) - Centered horizontally, shifted down
-        pos3 = QPoint(400, 420)
-
-        positions = [pos0, pos1, pos2, pos3]
-
-        # Build UI Rows
         for index, row in enumerate(self.rows):
-            lbl = QLabel(" ".join(row), diamond_container)  # Parent the label to the diamond_container
+            lbl = QLabel(" ".join(row), diamond_container)
             lbl.setStyleSheet('font: 30pt "Segoe UI";')
-
-            # Center the label text itself
             lbl.setAlignment(Qt.AlignCenter)
-
-            # This width must be wide enough for the text + padding/spacing.
             lbl.setFixedWidth(400)
-            # Make the height large enough to accommodate the font size and padding.
             lbl.setFixedHeight(50)
 
-            # Adjust position to center the label's *middle* on the target QPoint
             x_pos = positions[index].x() - (lbl.width() // 2)
             y_pos = positions[index].y() - (lbl.height() // 2)
 
             lbl.move(x_pos, y_pos)
-
             self.row_labels.append(lbl)
 
-        # CONTROLLER THREAD SETUP
+        # Worker
         self.worker = ControllerWorker()
         self.worker.move_left.connect(self.move_left)
         self.worker.move_right.connect(self.move_right)
-
-        # Connection for direct row selection (X, Y, B, A buttons)
         self.worker.direct_row_select.connect(self.set_row_and_enter_mode)
-
         self.worker.select_letter.connect(self.add_or_select_function)
         self.worker.delete_char.connect(self.backspace)
-
-        # Connection for Caps Lock
         self.worker.toggle_caps.connect(self.toggle_caps_lock)
-
-        # Connection for Plus button (always adds space)
         self.worker.insert_space.connect(self.add_space)
 
-        self.worker.start()
+        # Autocomplete connections
+        self.worker.toggle_autocomplete.connect(self.toggle_autocomplete)
+        self.worker.move_suggestion_left.connect(self.prev_suggestion)
+        self.worker.move_suggestion_right.connect(self.next_suggestion)
+        self.worker.select_suggestion.connect(self.select_suggestion)
 
-        # Instructions
-        # Use a small stretch before and a fixed size for the hint
+        self.worker.start()
+        app.aboutToQuit.connect(self.worker.stop)
+
+        # Hint
         layout.addStretch(1)
-        # UPDATED HINT: Changed [Minus/Plus] to [Minus] Select and [Plus] Space
         hint = QLabel(
-            "CONTROLS: [A/B/X/Y]: Direct Row Select | [Y/B]: Move Cursor | [Minus]: Space | [ZL]: Delete | [ZR]: Select | [X]: Toggle CAPS")
+            "KEYBOARD: [A/B/X/Y]: Row Select | [Y/B]: Move Cursor | [RT]: Select Letter | [RB]: Autocomplete | AUTOSUGGEST: [A]: Exit | [Y/B]: Change Word | [RT]: Select Word"
+        )
         hint.setStyleSheet("color: #aaa; font-size: 10pt;")
         hint.setAlignment(Qt.AlignCenter)
-        layout.addWidget(hint, 0)  # stretch factor 0
+        layout.addWidget(hint, 0)
 
         self.update_highlight()
 
-    # ------------------ Data and State Logic ------------------ #
+        # Autocomplete state
+        self.autocomplete_active = False
+        self.suggestions = []
+        self.suggestion_index = 0
 
+    # ------------------ Keyboard Logic ------------------ #
     def _regenerate_keyboard_rows(self):
-        """ Regenerates the rows based on the current caps lock state. """
         new_rows = []
         for row in self.base_rows:
             new_row = []
             for item in row:
-                if len(item) == 1:  # Only change case for single letters
+                if len(item) == 1:
                     new_row.append(item.upper() if self.is_caps_locked else item.lower())
-                else:  # Keep SPACE/BACK as is
+                else:
                     new_row.append(item)
             new_rows.append(new_row)
         return new_rows
 
     @Slot()
     def toggle_caps_lock(self):
-        """ Slot to handle Caps Lock press (X button). """
         self.is_caps_locked = not self.is_caps_locked
         self.rows = self._regenerate_keyboard_rows()
         self.update_highlight()
 
-    # Sets the selected row and automatically enters Letter Select Mode
     @Slot(int)
     def set_row_and_enter_mode(self, row_index):
+        if row_index == -1:
+            self.inside_row = False
+            self.worker.inside_row = False
+            self.update_highlight()
+            return
+
         self.sel_row = row_index
         self.sel_index = 0
         self.inside_row = True
-        self.worker.inside_row = True  # Sync worker state
+        self.worker.inside_row = True
         self.update_highlight()
 
-    # Navigation
     @Slot()
     def move_left(self):
         if not self.inside_row: return
-        self.sel_index = max(0, self.sel_index - 1)
+        row_length = len(self.rows[self.sel_row])
+        self.sel_index = (self.sel_index - 1) % row_length
         self.update_highlight()
+
     @Slot()
     def move_right(self):
         if not self.inside_row: return
-        self.sel_index = min(len(self.rows[self.sel_row]) - 1, self.sel_index + 1)
+        row_length = len(self.rows[self.sel_row])
+        self.sel_index = (self.sel_index + 1) % row_length
         self.update_highlight()
 
-    # Handles adding a letter, space, or backspace when a key is selected (via Minus/Select button)
     @Slot()
     def add_or_select_function(self):
         if not self.inside_row: return
-
         current_text = self.output.text()
-
+        if current_text == "Typing...": current_text = ""
         item = self.rows[self.sel_row][self.sel_index]
-
-        # NOTE: Only need to check for BACK here, as SPACE is now handled by the Plus button
-        if item == "BACK":
-            self.backspace()
-        elif item == "SPACE":
-            # If the user selects the SPACE key via the Minus/Select button, it still works
-            self.add_space()
-        else:
-            # It's a normal letter
-            self.output.setText(current_text + item)
+        self.output.setText(current_text + item)
 
     @Slot()
     def add_space(self):
-        """ Slot to handle the dedicated Space button (Plus button) """
         current_text = self.output.text()
+        if current_text == "Typing...": current_text = ""
         self.output.setText(current_text + " ")
 
     @Slot()
     def backspace(self):
-        """ Used by the Right Trigger (ZR/RT) and the 'BACK' button in the UI """
         current = self.output.text()
-        if current and current != "":
+        if current and current != "Typing...":
             self.output.setText(current[:-1])
 
-    # ------------------ Visual Update ------------------ #
+    # ------------------ Autocomplete Slots ------------------ #
+    @Slot()
+    def toggle_autocomplete(self):
+        self.autocomplete_active = not self.autocomplete_active
+        self.worker.autocomplete_active = self.autocomplete_active
+
+        if self.autocomplete_active:
+            # When turning ON, save current position
+            self.prev_inside_row = self.inside_row
+            self.prev_sel_row = self.sel_row
+            self.prev_sel_index = self.sel_index
+
+            # Optionally, disable row display while in autocomplete mode
+            self.inside_row = False
+
+            self.update_suggestions()
+        else:
+            # When turning OFF (by A or RB), restore previous position
+            self.inside_row = self.prev_inside_row
+            self.sel_row = self.prev_sel_row
+            self.sel_index = self.prev_sel_index
+            self.worker.inside_row = self.prev_inside_row  # Restore worker's state too
+
+            self.suggestion_label.setText("")
+            self.update_highlight()
+
+    def update_suggestions(self):
+        text = self.output.text()
+        if text == "Typing...": text = ""
+        self.suggestions = generate_suggestions(text)
+        self.suggestion_index = 0
+        self.display_suggestions()
+
+    def display_suggestions(self):
+        if self.suggestions and self.autocomplete_active:
+            display_text = ""
+            for i, s in enumerate(self.suggestions):
+                if i == self.suggestion_index:
+                    display_text += f"<span style='background-color: #0078d7; color: white; padding: 2px 10px; border-radius: 5px;'>{s.strip()}</span> "
+                else:
+                    display_text += f"<span style='color: #ccc; padding: 2px 10px;'>{s.strip()}</span> "
+            self.suggestion_label.setText(display_text)
+        elif self.autocomplete_active:
+            self.suggestion_label.setText("<span style='color: #ccc;'>No suggestions</span>")
+        else:
+            self.suggestion_label.setText("")
+
+    @Slot()
+    def prev_suggestion(self):
+        if not self.suggestions or not self.autocomplete_active: return
+        self.suggestion_index = (self.suggestion_index - 1) % len(self.suggestions)
+        self.display_suggestions()
+
+    @Slot()
+    def next_suggestion(self):
+        if not self.suggestions or not self.autocomplete_active: return
+        self.suggestion_index = (self.suggestion_index + 1) % len(self.suggestions)
+        self.display_suggestions()
+
+    @Slot()
+    def select_suggestion(self):
+        if not self.suggestions or not self.autocomplete_active: return
+
+        text = self.output.text()
+        if text == "Typing...": text = ""
+
+        suggestion_text = self.suggestions[self.suggestion_index]
+
+        words = text.split()
+        if words:
+            new_text = " ".join(words[:-1]) + " " + suggestion_text
+        else:
+            new_text = suggestion_text
+
+        self.output.setText(new_text.strip() + " ")
+
+        # Turn off autocomplete after selection
+        self.toggle_autocomplete()
+
+    # ------------------ UI Update ------------------ #
     def update_highlight(self):
-        # Update the UI display rows based on the current self.rows (which reflects caps state)
         for r, label in enumerate(self.row_labels):
             text = ""
             for i, item in enumerate(self.rows[r]):
-
-                # Check if we need to display a special character
                 base_item = self.base_rows[r][i]
-                display_item = item if len(base_item) == 1 else f"<{item}>"
+                is_function_key = len(base_item) > 1
+                display_item = item if not is_function_key else f"<{item}>"
 
                 if r == self.sel_row and self.inside_row:
                     if i == self.sel_index:
-                        # Blue Highlight (Active Selection)
-                        text += f"<span style='background-color: #0078d7; color: white; padding: 0 10px;'>{display_item}</span> "
+                        text += f"<span style='background-color: #0078d7; color: white; padding: 0 10px; border-radius: 5px;'>{display_item}</span> "
                     else:
-                        # Active Row White
-                        text += f"<span style='color: white;'>{display_item}</span> "
+                        text += f"<span style='color: white; padding: 0 10px;'>{display_item}</span> "
                 else:
-                    # Inactive Row Gray
-                    text += f"<span style='color: #666;'>{display_item}</span> "
+                    text += f"<span style='color: #666; padding: 0 10px;'>{display_item}</span> "
             label.setText(text)
 
 
+# ------------------ Run ------------------ #
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = OnScreenKeyboard()
