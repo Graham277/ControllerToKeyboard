@@ -49,28 +49,28 @@ class ControllerWorker(QThread):
 
             for event in pygame.event.get():
                 if event.type == pygame.JOYBUTTONDOWN:
-                    # BUTTON MAPPINGS FOR SWITCH PRO CONTROLLER (Common Linux Layout)
+                    # BUTTON MAPPINGS FOR SWITCH PRO CONTROLLER
                     # 0=B, 1=A, 2=X, 3=Y, 4=LB, 5=RB, 7=LT, 8=RT, 9=Minus, 10=Plus, 11=Home, 12=Screenshot
 
                     if event.button == 3:  # Y Button
                         if self.inside_row:
                             self.move_left.emit()
                         else:
-                            # Direct Row Select: Y opens Row 0 (EICV...)
+                            # Direct Row Select: Y opens Row 1
                             self.direct_row_select.emit(1)
 
                     if event.button == 0:  # B Button
                         if self.inside_row:
                             self.move_right.emit()
                         else:
-                            # Direct Row Select: B opens Row 2 (TNMK...)
+                            # Direct Row Select: B opens Row 3
                             self.direct_row_select.emit(3)
 
                     if event.button == 1:  # A Button
                         if self.inside_row:
                             self.inside_row = False
                         else:
-                            # Direct Row Select: A opens Row 3 (ASFXPL)
+                            # Direct Row Select: A opens Row 2
                             self.direct_row_select.emit(2)
 
                     if event.button == 2:  # X Button
@@ -78,7 +78,7 @@ class ControllerWorker(QThread):
                             # Emit signal to toggle Caps Lock
                             self.toggle_caps.emit()
                         else:
-                            # Direct Row Select: X opens Row 1 (ORYQ...)
+                            # Direct Row Select: X opens Row 0
                             self.direct_row_select.emit(0)
 
                     # Right trigger to select the current letter
@@ -244,33 +244,30 @@ class OnScreenKeyboard(QMainWindow):
         self.rows = self._regenerate_keyboard_rows()
         self.update_highlight()
 
-    # ------------------ Mode and Row Selection Slots ------------------ #
+    # Sets the selected row and automatically enters Letter Select Mode
     @Slot(int)
     def set_row_and_enter_mode(self, row_index):
-        """ Sets the selected row and automatically enters Letter Select Mode """
         self.sel_row = row_index
         self.sel_index = 0
         self.inside_row = True
         self.worker.inside_row = True  # Sync worker state
         self.update_highlight()
 
-    # ------------------ Navigation Slots ------------------ #
+    # Navigation
     @Slot()
     def move_left(self):
         if not self.inside_row: return
         self.sel_index = max(0, self.sel_index - 1)
         self.update_highlight()
-
     @Slot()
     def move_right(self):
         if not self.inside_row: return
         self.sel_index = min(len(self.rows[self.sel_row]) - 1, self.sel_index + 1)
         self.update_highlight()
 
+    # Handles adding a letter, space, or backspace when a key is selected (via Minus/Select button)
     @Slot()
     def add_or_select_function(self):
-        """ Handles adding a letter, space, or backspace when a key is selected (via Minus/Select button) """
-
         if not self.inside_row: return
 
         current_text = self.output.text()
