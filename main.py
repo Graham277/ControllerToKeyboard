@@ -451,15 +451,22 @@ class OnScreenKeyboard(QMainWindow):
 
         words = text.split()
         if words:
+            # build the new text for the on-screen label
             new_text = " ".join(words[:-1]) + " " + suggestion_text
+            last_word = words[-1]
         else:
             new_text = suggestion_text
+            last_word = ""
 
-        # Update label
+        # Update label shown in the overlay
         self.output.setText(new_text.strip() + " ")
 
-        # Send suggestion to OS (suggestion_text includes trailing space if generated)
+        # Send keystrokes to the OS so the old partial word is replaced
         try:
+            # delete the old last word in the focused application
+            for _ in range(len(last_word)):
+                pyautogui.press('backspace')
+            # type the suggestion (suggestion_text may include a trailing space)
             pyautogui.typewrite(suggestion_text)
         except Exception as e:
             print("pyautogui error typing suggestion:", e)
