@@ -3,6 +3,11 @@ import pygame
 from PySide6.QtCore import Signal, Slot, Qt, QThread, QPoint
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel
 import difflib
+import pyautogui
+
+# Make pyautogui responsive and disable fail-safe for controller-driven typing
+pyautogui.FAILSAFE = False
+pyautogui.PAUSE = 0
 
 # Autocomplete Data
 # Load word list
@@ -175,9 +180,14 @@ class OnScreenKeyboard(QMainWindow):
 
         # Window setup
         self.setWindowTitle("Controller Keyboard Overlay")
+        # Keep on top and attempt to avoid taking focus
         self.setWindowFlags(Qt.WindowStaysOnTopHint | Qt.Tool)
+        self.setWindowFlag(Qt.WindowDoesNotAcceptFocus, True)
         self.setAttribute(Qt.WA_TranslucentBackground)
+        # Try not to activate when shown
+        self.setAttribute(Qt.WA_ShowWithoutActivating, True)
         self.resize(900, 600)
+        self.setFocusPolicy(Qt.NoFocus)
 
         # State
         self.inside_row = False
@@ -220,18 +230,21 @@ class OnScreenKeyboard(QMainWindow):
         self.output.setAlignment(Qt.AlignCenter)
         self.output.setFixedHeight(60)
         self.output.setStyleSheet('font: 24pt "Segoe UI"; background-color: rgba(0,0,0,100); border-radius: 8px;')
+        self.output.setFocusPolicy(Qt.NoFocus)
         layout.addWidget(self.output, 0)
 
         # 2. Autocomplete Suggestion Label
         self.suggestion_label = QLabel("")
         self.suggestion_label.setAlignment(Qt.AlignCenter)
         self.suggestion_label.setStyleSheet('font: 16pt "Segoe UI"; min-height: 40px;')
+        self.suggestion_label.setFocusPolicy(Qt.NoFocus)
         layout.addWidget(self.suggestion_label, 0)
 
         # Diamond Container for Rows
         diamond_container = QWidget()
         diamond_container.setFixedSize(800, 450)
         diamond_container.setObjectName("DiamondContainer")
+        diamond_container.setFocusPolicy(Qt.NoFocus)
         layout.addWidget(diamond_container, 20, alignment=Qt.AlignCenter)
 
         positions = [QPoint(400, 30), QPoint(150, 225), QPoint(650, 225), QPoint(400, 420)]
@@ -242,6 +255,7 @@ class OnScreenKeyboard(QMainWindow):
             lbl.setAlignment(Qt.AlignCenter)
             lbl.setFixedWidth(400)
             lbl.setFixedHeight(50)
+            lbl.setFocusPolicy(Qt.NoFocus)
 
             x_pos = positions[index].x() - (lbl.width() // 2)
             y_pos = positions[index].y() - (lbl.height() // 2)
@@ -275,6 +289,7 @@ class OnScreenKeyboard(QMainWindow):
         )
         hint.setStyleSheet("color: #aaa; font-size: 10pt;")
         hint.setAlignment(Qt.AlignCenter)
+        hint.setFocusPolicy(Qt.NoFocus)
         layout.addWidget(hint, 0)
 
         self.update_highlight()
@@ -337,19 +352,34 @@ class OnScreenKeyboard(QMainWindow):
         current_text = self.output.text()
         if current_text == "Typing...": current_text = ""
         item = self.rows[self.sel_row][self.sel_index]
+        # Update label
         self.output.setText(current_text + item)
+        # Send keystroke to OS
+        try:
+            # pyautogui.typewrite will type the character(s) as given (case-sensitive)
+            pyautogui.typewrite(item)
+        except Exception as e:
+            print("pyautogui error typing:", e)
 
     @Slot()
     def add_space(self):
         current_text = self.output.text()
         if current_text == "Typing...": current_text = ""
         self.output.setText(current_text + " ")
+        try:
+            pyautogui.press('space')
+        except Exception as e:
+            print("pyautogui error pressing space:", e)
 
     @Slot()
     def backspace(self):
         current = self.output.text()
         if current and current != "Typing...":
             self.output.setText(current[:-1])
+        try:
+            pyautogui.press('backspace')
+        except Exception as e:
+            print("pyautogui error pressing backspace:", e)
 
     # ------------------ Autocomplete Slots ------------------ #
     @Slot()
@@ -425,7 +455,14 @@ class OnScreenKeyboard(QMainWindow):
         else:
             new_text = suggestion_text
 
+        # Update label
         self.output.setText(new_text.strip() + " ")
+
+        # Send suggestion to OS (suggestion_text includes trailing space if generated)
+        try:
+            pyautogui.typewrite(suggestion_text)
+        except Exception as e:
+            print("pyautogui error typing suggestion:", e)
 
         # Turn off autocomplete after selection
         self.toggle_autocomplete()
