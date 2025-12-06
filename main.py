@@ -4,7 +4,7 @@ from PySide6.QtCore import Signal, Slot, Qt, QThread, QPoint
 from PySide6.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel
 import difflib
 
-# ------------------ Autocomplete Data ------------------ #
+# Autocomplete Data
 # Load word list
 try:
     with open("words.txt", "r", encoding="utf-8") as f:
@@ -105,10 +105,12 @@ class ControllerWorker(QThread):
                     break
 
                 if event.type == pygame.JOYBUTTONDOWN:
-                    # BUTTON MAPPINGS FOR SWITCH PRO CONTROLLER
+                    # Button mappings
                     # 0=B, 1=A, 2=X, 3=Y, 4=LB, 6=RB, 7=LT, 8=RT, 9=Minus, 10=Plus, 11=Home, 12=Screenshot
 
-                    # ------------------ A BUTTON CONTEXTUAL LOGIC ------------------
+                    # A, B, X, Y open rows when in row select mode
+
+                    # Opens select mode, or returns user to row if in autocomplete
                     if event.button == 1:  # A Button
                         if self.autocomplete_active:
                             self.toggle_autocomplete.emit()  # Toggle OFF
@@ -122,8 +124,7 @@ class ControllerWorker(QThread):
                             self.direct_row_select.emit(2)
                         continue
 
-                    # ------------------ CONTEXTUAL CONTROLS (Y, B, RT) ------------------
-
+                    # Selects a row, and when in a row move
                     if event.button == 3:  # Y Button
                         if self.autocomplete_active:
                             self.move_suggestion_left.emit()
@@ -132,6 +133,7 @@ class ControllerWorker(QThread):
                         else:
                             self.direct_row_select.emit(1)
 
+                    # Selects a row, and when in a row move
                     elif event.button == 0:  # B Button
                         if self.autocomplete_active:
                             self.move_suggestion_right.emit()
@@ -140,14 +142,12 @@ class ControllerWorker(QThread):
                         else:
                             self.direct_row_select.emit(3)
 
+                    # Adds words/letters to the text
                     elif event.button == 8:  # RT / Select Button
                         if self.autocomplete_active:
                             self.select_suggestion.emit()  # Selects the entire suggestion word
                         elif self.inside_row:
                             self.select_letter.emit()  # Adds the current letter
-                        # If not inside row and not autocomplete, RT does nothing.
-
-                    # ------------------ NON-CONTEXTUAL CONTROLS (X, Home, Plus, RB) ------------------
 
                     elif event.button == 2:  # X Button
                         if self.inside_row:
@@ -155,22 +155,19 @@ class ControllerWorker(QThread):
                         else:
                             self.direct_row_select.emit(0)
 
-                    # Home deletes the current letter
-                    elif event.button == 11:
+                    # Delete the current letter
+                    elif event.button == 11: # Home
                         self.delete_char.emit()
 
-                    # Plus Button (10) inserts a space
-                    elif event.button == 10:
+                    # Insert a space
+                    elif event.button == 10: # Plus
                         self.insert_space.emit()
 
-                    # RB (Right Bumper) to toggle autocomplete
-                    elif event.button == 6:
+                    # Toggle autocomplete
+                    elif event.button == 6: # Right bumper
                         self.toggle_autocomplete.emit()
 
         pygame.quit()
-
-    # ------------------ On-Screen Keyboard ------------------ #
-
 
 class OnScreenKeyboard(QMainWindow):
     def __init__(self):
@@ -231,7 +228,7 @@ class OnScreenKeyboard(QMainWindow):
         self.suggestion_label.setStyleSheet('font: 16pt "Segoe UI"; min-height: 40px;')
         layout.addWidget(self.suggestion_label, 0)
 
-        # --- Diamond Container for Rows ---
+        # Diamond Container for Rows
         diamond_container = QWidget()
         diamond_container.setFixedSize(800, 450)
         diamond_container.setObjectName("DiamondContainer")
@@ -287,7 +284,7 @@ class OnScreenKeyboard(QMainWindow):
         self.suggestions = []
         self.suggestion_index = 0
 
-    # ------------------ Keyboard Logic ------------------ #
+    # Keyboard Logic
     def _regenerate_keyboard_rows(self):
         new_rows = []
         for row in self.base_rows:
@@ -433,7 +430,7 @@ class OnScreenKeyboard(QMainWindow):
         # Turn off autocomplete after selection
         self.toggle_autocomplete()
 
-    # ------------------ UI Update ------------------ #
+    # UI Update
     def update_highlight(self):
         for r, label in enumerate(self.row_labels):
             text = ""
@@ -452,7 +449,6 @@ class OnScreenKeyboard(QMainWindow):
             label.setText(text)
 
 
-# ------------------ Run ------------------ #
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     win = OnScreenKeyboard()
