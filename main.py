@@ -1,6 +1,6 @@
 import sys
 import pygame
-from PySide6.QtCore import QObject, Signal, Slot, Qt, QThread, QPoint
+from PySide6.QtCore import Signal, Slot, Qt, QThread, QPoint
 from PySide6.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, QLabel)
 
 
@@ -86,8 +86,8 @@ class ControllerWorker(QThread):
                         if self.inside_row:
                             self.select_letter.emit()
 
-                    # Left trigger deletes the current letter
-                    elif event.button == 7:
+                    # Home deletes the current letter
+                    elif event.button == 11:
                         if self.inside_row:
                             self.delete_char.emit()
 
@@ -118,7 +118,6 @@ class OnScreenKeyboard(QMainWindow):
             list("ORYQBU"),
             list("TNMKZGD"),
             list("ASFXPL"),
-            ["SPACE", "BACK"],
         ]
         self.rows = self._regenerate_keyboard_rows()
 
@@ -143,32 +142,56 @@ class OnScreenKeyboard(QMainWindow):
         layout.setContentsMargins(20, 20, 20, 20)
 
         # Output Label (Fixed size, stretch 0)
-        self.output = QLabel("Typing...")
+        self.output = QLabel("")
         self.output.setAlignment(Qt.AlignCenter)
         self.output.setFixedHeight(60)
         self.output.setStyleSheet('font: 24pt "Segoe UI"; background-color: rgba(0,0,0,100); border-radius: 8px;')
         layout.addWidget(self.output, 0)  # stretch factor 0
 
-        # Row Container - To apply stretch to all rows evenly
-        rows_container = QWidget()
-        rows_layout = QVBoxLayout(rows_container)
-        rows_layout.setContentsMargins(0, 0, 0, 0)
-        rows_layout.setSpacing(5)  # Add a small gap between rows
+        # --- Diamond Container for Rows ---
+        # Use a basic QWidget for absolute positioning
+        diamond_container = QWidget()
+
+        diamond_container.setFixedSize(800, 450)
+        diamond_container.setObjectName("DiamondContainer")
+        layout.addWidget(diamond_container, 20, alignment=Qt.AlignCenter)  # Center the container in the main layout
+
+        # Positioning offsets (from the top-left of the diamond_container)
+        # The center of the container is (400, 225)
+
+        # [Row 0]: Top (X Button) - Centered horizontally at the top
+        pos0 = QPoint(400, 30)
+        # [Row 1]: Left (Y Button) - Centered vertically, offset to the left
+        pos1 = QPoint(150, 225)
+        # [Row 2]: Right (A Button) - Centered vertically, offset to the right
+        pos2 = QPoint(650, 225)
+        # [Row 3]: Bottom (B Button) - Centered horizontally, shifted down
+        pos3 = QPoint(400, 420)
+
+        positions = [pos0, pos1, pos2, pos3]
 
         # Build UI Rows
         for index, row in enumerate(self.rows):
-            lbl = QLabel(" ".join(row))
-            lbl.setStyleSheet('font: 22pt "Segoe UI";')
+            lbl = QLabel(" ".join(row), diamond_container)  # Parent the label to the diamond_container
+            lbl.setStyleSheet('font: 30pt "Segoe UI";')
+
+            # Center the label text itself
             lbl.setAlignment(Qt.AlignCenter)
-            # Add label to the inner rows layout, giving each one equal stretch
-            rows_layout.addWidget(lbl, 1)
+
+            # This width must be wide enough for the text + padding/spacing.
+            lbl.setFixedWidth(400)
+            # Make the height large enough to accommodate the font size and padding.
+            lbl.setFixedHeight(50)
+
+            # Adjust position to center the label's *middle* on the target QPoint
+            x_pos = positions[index].x() - (lbl.width() // 2)
+            y_pos = positions[index].y() - (lbl.height() // 2)
+
+            lbl.move(x_pos, y_pos)
+
             self.row_labels.append(lbl)
 
-        # Add the entire row container to the main layout with a high stretch factor (e.g., 20)
-        # This makes the rows dominate the available vertical space.
-        layout.addWidget(rows_container, 20)
-
-        # 3. CONTROLLER THREAD SETUP
+        # CONTROLLER THREAD SETUP
         self.worker = ControllerWorker()
         self.worker.move_left.connect(self.move_left)
         self.worker.move_right.connect(self.move_right)
@@ -182,7 +205,7 @@ class OnScreenKeyboard(QMainWindow):
         # Connection for Caps Lock
         self.worker.toggle_caps.connect(self.toggle_caps_lock)
 
-        # NEW: Connection for Plus button (always adds space)
+        # Connection for Plus button (always adds space)
         self.worker.insert_space.connect(self.add_space)
 
         self.worker.start()
@@ -251,7 +274,6 @@ class OnScreenKeyboard(QMainWindow):
         if not self.inside_row: return
 
         current_text = self.output.text()
-        if current_text == "Typing...": current_text = ""
 
         item = self.rows[self.sel_row][self.sel_index]
 
@@ -269,14 +291,13 @@ class OnScreenKeyboard(QMainWindow):
     def add_space(self):
         """ Slot to handle the dedicated Space button (Plus button) """
         current_text = self.output.text()
-        if current_text == "Typing...": current_text = ""
         self.output.setText(current_text + " ")
 
     @Slot()
     def backspace(self):
         """ Used by the Right Trigger (ZR/RT) and the 'BACK' button in the UI """
         current = self.output.text()
-        if current and current != "Typing...":
+        if current and current != "":
             self.output.setText(current[:-1])
 
     # ------------------ Visual Update ------------------ #
